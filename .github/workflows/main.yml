@@ -1,120 +1,42 @@
-name: Build Simple Camera HAL
+name: Build Camera HAL
 
-on: 
+on:
   push:
-    branches: [ main, master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
-  build-camera-hal:
+  build:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Install Android NDK
+    - name: Setup NDK
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
         unzip -q android-ndk-r25b-linux.zip
 
-    - name: Create and compile minimal HAL
+    - name: Create HAL source
       run: |
-        NDK_PATH="$GITHUB_WORKSPACE/android-ndk-r25b"
-        TOOLCHAIN="$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64"
-        TARGET="armv7a-linux-androideabi"
-        API="28"
-        
-        # Create simple C++ HAL file
-        cat > minimal_hal.cpp << 'EOF'
+        cat > hal.cpp << 'EOF'
 #include <android/log.h>
 
-#define LOG_TAG "SimpleCameraHAL"
-
-// Basic hardware structures
-typedef struct hw_module_t {
-    unsigned int tag;
-    unsigned short module_api_version;
-    unsigned short hal_api_version;
-    const char* id;
-    const char* name;
-    const char* author;
-    void* methods;
-} hw_module_t;
-
-typedef struct hw_device_t {
-    unsigned int tag;
-    unsigned int version;
-    struct hw_module_t* module;
-    unsigned int reserved[12];
-    int (*close)(struct hw_device_t* device);
-} hw_device_t;
-
-// Camera module structure
-typedef struct camera_module_t {
-    hw_module_t common;
-    int (*get_number_of_cameras)(void);
-    int (*get_camera_info)(int camera_id, void* info);
-    int (*set_callbacks)(const void* callbacks);
-    void* reserved[6];
-} camera_module_t;
-
-// Implementation
-static int get_number_of_cameras() {
-    __android_log_write(ANDROID_LOG_INFO, LOG_TAG, "get_number_of_cameras: returning 1");
-    return 1;
-}
-
-static int get_camera_info(int camera_id, void* info) {
-    __android_log_write(ANDROID_LOG_INFO, LOG_TAG, "get_camera_info called");
-    return 0;
-}
-
-static int set_callbacks(const void* callbacks) {
-    __android_log_write(ANDROID_LOG_INFO, LOG_TAG, "set_callbacks called");
-    return 0;
-}
-
-// Main HAL module
 __attribute__((visibility("default")))
-camera_module_t HAL_MODULE_INFO_SYM = {
-    .common = {
-        .tag = 0x48_57_4D_42,
-        .module_api_version = 0x00020004,
-        .hal_api_version = 0x00010000,
-        .id = "camera",
-        .name = "Simple Camera HAL",
-        .author = "Android",
-        .methods = 0,
-    },
-    .get_number_of_cameras = get_number_of_cameras,
-    .get_camera_info = get_camera_info,
-    .set_callbacks = set_callbacks,
-};
+void camera_hal_init() {
+    __android_log_write(3, "CameraHAL", "HAL loaded");
+}
 EOF
 
-        echo "=== COMPILING SIMPLE HAL ==="
-        $TOOLCHAIN/bin/$TARGET$API-clang++ \
-            -shared -fPIC -std=c++17 \
-            -o camera.msm8916.so \
-            minimal_hal.cpp \
-            -I$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include \
-            -llog -landroid \
-            -Wno-multichar
-        
-        echo "=== CHECKING RESULT ==="
-        if [ -f "camera.msm8916.so" ]; then
-            echo "✅ SUCCESS: HAL file created!"
-            file camera.msm8916.so
-            ls -la camera.msm8916.so
-        else
-            echo "❌ FAILED: No file created"
-            exit 1
-        fi
+    - name: Compile HAL
+      run: |
+        NDK="$GITHUB_WORKSPACE/android-ndk-r25b"
+        $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang++ \
+        -shared -fPIC -o camera.msm8916.so hal.cpp -llog
 
-    - name: Upload HAL artifact
+    - name: Upload result
       uses: actions/upload-artifact@v4
       with:
-        name: camera-hal-binary
+        name: camera-hal
         path: camera.msm8916.so
-        retention-days: 30
