@@ -1,0 +1,54 @@
+name: Сборка Camera HAL для MSM8916
+
+on: 
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # Шаг 1: Загружаем исходный код
+    - name: Загрузка кода
+      uses: actions/checkout@v4
+      
+    # Шаг 2: Устанавливаем Android NDK
+    - name: Установка Android NDK
+      uses: android-actions/setup-android@v0
+      with:
+        ndk-version: '25.2.9519653'
+        
+    # Шаг 3: Компилируем для ARMv7 (32-бит)
+    - name: Компиляция для ARMv7
+      run: |
+        export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
+        export TARGET=armv7a-linux-androideabi
+        export API=28
+        
+        echo "Начинаем компиляцию Camera HAL..."
+        
+        # Основная команда компиляции
+        $TOOLCHAIN/bin/$TARGET$API-clang++ \
+          -shared -fPIC -std=c++17 \
+          -o camera.msm8916.so \
+          *.cpp \
+          -I. \
+          -llog -lutils -lcutils -lhardware -lcamera_metadata \
+          -DLOG_TAG=\"CameraHAL\" \
+          -D__ARM_ARCH_7A__ \
+          -Wno-multichar -Wno-deprecated-declarations
+        
+        echo "Проверяем скомпилированный файл..."
+        file camera.msm8916.so
+        ls -la camera.msm8916.so
+
+    # Шаг 4: Сохраняем результат
+    - name: Сохранение собранного файла
+      uses: actions/upload-artifact@v4
+      with:
+        name: camera-msm8916-hal
+        path: camera.msm8916.so
+        retention-days: 30
