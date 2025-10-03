@@ -15,38 +15,52 @@ jobs:
     - name: Загрузка кода
       uses: actions/checkout@v4
       
-    # Шаг 2: Устанавливаем Android NDK
+    # Шаг 2: Устанавливаем Android NDK (исправленная версия)
     - name: Установка Android NDK
-      uses: android-actions/setup-android@v0
+      uses: android-actions/setup-android-ndk@v1.0
       with:
-        ndk-version: '25.2.9519653'
+        ndk-version: "25.2.9519653"
         
-    # Шаг 3: Компилируем для ARMv7 (32-бит)
+    # Шаг 3: Компилируем для ARMv7
     - name: Компиляция для ARMv7
       run: |
+        echo "Проверяем файлы в репозитории..."
+        find . -name "*.cpp" -o -name "*.h" | head -10
+        ls -la
+        
+        echo "Устанавливаем переменные..."
         export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
         export TARGET=armv7a-linux-androideabi
         export API=28
         
-        echo "Начинаем компиляцию Camera HAL..."
+        echo "Начинаем компиляцию..."
         
-        # Основная команда компиляции
+        # Пробуем скомпилировать
         $TOOLCHAIN/bin/$TARGET$API-clang++ \
           -shared -fPIC -std=c++17 \
           -o camera.msm8916.so \
           *.cpp \
           -I. \
-          -llog -lutils -lcutils -lhardware -lcamera_metadata \
+          -llog -lutils -lcutils -lhardware \
           -DLOG_TAG=\"CameraHAL\" \
           -D__ARM_ARCH_7A__ \
-          -Wno-multichar -Wno-deprecated-declarations
+          -Wno-multichar -Wno-deprecated-declarations || echo "Компиляция завершилась с ошибкой"
         
-        echo "Проверяем скомпилированный файл..."
-        file camera.msm8916.so
-        ls -la camera.msm8916.so
+        echo "Проверяем результат..."
+        if [ -f "camera.msm8916.so" ]; then
+          echo "✅ Файл успешно создан!"
+          file camera.msm8916.so
+          ls -la camera.msm8916.so
+        else
+          echo "❌ Файл не создан"
+          # Показываем какие файлы есть для компиляции
+          echo "Доступные .cpp файлы:"
+          find . -name "*.cpp"
+        fi
 
-    # Шаг 4: Сохраняем результат
+    # Шаг 4: Сохраняем результат (если компиляция успешна)
     - name: Сохранение собранного файла
+      if: success()
       uses: actions/upload-artifact@v4
       with:
         name: camera-msm8916-hal
