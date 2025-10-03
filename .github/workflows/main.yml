@@ -3,8 +3,7 @@ name: Сборка Camera HAL для MSM8916
 on: 
   push:
     branches: [ main, master ]
-  pull_request:
-    branches: [ main, master ]
+  workflow_dispatch:  # Позволяет запускать вручную
 
 jobs:
   build:
@@ -15,27 +14,32 @@ jobs:
     - name: Загрузка кода
       uses: actions/checkout@v4
       
-    # Шаг 2: Устанавливаем Android NDK (исправленная версия)
+    # Шаг 2: Скачиваем и устанавливаем NDK вручную
     - name: Установка Android NDK
-      uses: android-actions/setup-android-ndk@v1.0
-      with:
-        ndk-version: "25.2.9519653"
+      run: |
+        echo "Скачиваем Android NDK..."
+        wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+        unzip -q android-ndk-r25b-linux.zip
+        echo "NDK установлен в $(pwd)/android-ndk-r25b"
         
     # Шаг 3: Компилируем для ARMv7
-    - name: Компиляция для ARMv7
+    - name: Компиляция Camera HAL
       run: |
-        echo "Проверяем файлы в репозитории..."
-        find . -name "*.cpp" -o -name "*.h" | head -10
+        echo "=== ПРОВЕРКА ФАЙЛОВ ==="
+        find . -name "*.cpp" -o -name "*.h" | head -15
         ls -la
         
-        echo "Устанавливаем переменные..."
-        export TOOLCHAIN=$ANDROID_NDK_ROOT/toolchains/llvm/prebuilt/linux-x86_64
+        echo "=== НАСТРОЙКА ПЕРЕМЕННЫХ ==="
+        export NDK_PATH=$GITHUB_WORKSPACE/android-ndk-r25b
+        export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
         export TARGET=armv7a-linux-androideabi
         export API=28
         
-        echo "Начинаем компиляцию..."
+        echo "NDK Path: $NDK_PATH"
+        echo "Toolchain: $TOOLCHAIN"
         
-        # Пробуем скомпилировать
+        echo "=== КОМПИЛЯЦИЯ ==="
+        # Пробуем скомпилировать все CPP файлы
         $TOOLCHAIN/bin/$TARGET$API-clang++ \
           -shared -fPIC -std=c++17 \
           -o camera.msm8916.so \
@@ -44,21 +48,21 @@ jobs:
           -llog -lutils -lcutils -lhardware \
           -DLOG_TAG=\"CameraHAL\" \
           -D__ARM_ARCH_7A__ \
-          -Wno-multichar -Wno-deprecated-declarations || echo "Компиляция завершилась с ошибкой"
+          -Wno-multichar -Wno-deprecated-declarations -Wl,-soname,camera.msm8916.so
         
-        echo "Проверяем результат..."
+        echo "=== РЕЗУЛЬТАТ ==="
         if [ -f "camera.msm8916.so" ]; then
-          echo "✅ Файл успешно создан!"
+          echo "✅ УСПЕХ: Файл camera.msm8916.so создан!"
           file camera.msm8916.so
           ls -la camera.msm8916.so
         else
-          echo "❌ Файл не создан"
-          # Показываем какие файлы есть для компиляции
-          echo "Доступные .cpp файлы:"
-          find . -name "*.cpp"
+          echo "❌ ОШИБКА: Файл не создан"
+          echo "Пробуем компилировать по одному файлу..."
+          # Покажем какие .cpp файлы есть
+          find . -name "*.cpp" -exec echo "Файл: {}" \;
         fi
 
-    # Шаг 4: Сохраняем результат (если компиляция успешна)
+    # Шаг 4: Сохраняем результат
     - name: Сохранение собранного файла
       if: success()
       uses: actions/upload-artifact@v4
@@ -66,3 +70,15 @@ jobs:
         name: camera-msm8916-hal
         path: camera.msm8916.so
         retention-days: 30
+        
+    # Шаг 5: Отладочная информация если ошибка
+    - name: Отладочная информация
+      if: failure()
+      run: |
+        echo "=== ДЕТАЛИ ОШИБКИ ==="
+        echo "Содержимое папки:"
+        ls -la
+        echo "CPP файлы:"
+        find . -name "*.cpp"
+        echo "H файлы:"
+        find . -name "*.h"
