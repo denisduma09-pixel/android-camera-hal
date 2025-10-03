@@ -1,0 +1,53 @@
+name: Build Camera HAL
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup NDK
+      run: |
+        wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
+        unzip -q android-ndk-r25b-linux.zip
+
+    - name: Create HAL source
+      run: |
+        cat > hal.cpp << 'EOF'
+#include <android/log.h>
+
+extern "C" {
+void camera_hal_init() {
+    __android_log_write(3, "CameraHAL", "HAL loaded");
+}
+}
+EOF
+
+    - name: Compile HAL
+      run: |
+        NDK="$GITHUB_WORKSPACE/android-ndk-r25b"
+        $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang++ \
+        -shared -fPIC -o camera.msm8916.so hal.cpp -llog
+
+    - name: Check result
+      run: |
+        if [ -f "camera.msm8916.so" ]; then
+          echo "✅ HAL file created successfully!"
+          ls -la camera.msm8916.so
+        else
+          echo "❌ Failed to create HAL file"
+          exit 1
+        fi
+
+    - name: Upload result
+      uses: actions/upload-artifact@v4
+      with:
+        name: camera-hal
+        path: camera.msm8916.so
