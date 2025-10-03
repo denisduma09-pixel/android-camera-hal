@@ -20,21 +20,18 @@ jobs:
 
     - name: Create HAL source
       run: |
-        cat > hal.cpp << 'EOF'
-#include <android/log.h>
-
-extern "C" {
-void camera_hal_init() {
-    __android_log_write(3, "CameraHAL", "HAL loaded");
-}
-}
-EOF
+        echo '#include <android/log.h>' > hal.cpp
+        echo '' >> hal.cpp
+        echo 'extern "C" {' >> hal.cpp
+        echo 'void camera_hal_init() {' >> hal.cpp
+        echo '    __android_log_write(3, "CameraHAL", "HAL loaded");' >> hal.cpp
+        echo '}' >> hal.cpp
+        echo '}' >> hal.cpp
 
     - name: Compile HAL
       run: |
         NDK="$GITHUB_WORKSPACE/android-ndk-r25b"
-        $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang++ \
-        -shared -fPIC -o camera.msm8916.so hal.cpp -llog
+        $NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi28-clang++ -shared -fPIC -o camera.msm8916.so hal.cpp -llog
 
     - name: Check result
       run: |
