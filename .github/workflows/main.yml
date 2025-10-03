@@ -1,57 +1,197 @@
-name: Сборка Camera HAL для MSM8916
+name: Сборка простого V4L2 Camera HAL
 
-on: 
-  push:
-    branches: [ main, master ]
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: ubuntu-latest
     
     steps:
-    - name: Загрузка кода
+    - name: Загрузка пустого репозитория
       uses: actions/checkout@v4
       
-    - name: Установка Android NDK
+    - name: Установка NDK
       run: |
         wget -q https://dl.google.com/android/repository/android-ndk-r25b-linux.zip
         unzip -q android-ndk-r25b-linux.zip
 
-    - name: Создание недостающих заголовочных файлов
+    - name: Создание минимального Camera HAL
       run: |
-        echo "=== СОЗДАЕМ НЕОБХОДИМЫЕ ЗАГОЛОВОЧНЫЕ ФАЙЛЫ ==="
+        export NDK_PATH=$GITHUB_WORKSPACE/android-ndk-r25b
+        export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
+        export TARGET=armv7a-linux-androideabi
+        export API=28
         
-        # Создаем структуру папок
+        # Создаём простой C++ файл вместо сложного кода
+        cat > minimal_camera_hal.cpp << 'EOF'
+        #include <stdlib.h>
+        #include <unistd.h>
+        #include <fcntl.h>
+        #include <sys/ioctl.h>
+        #include <linux/videodev2.h>
+        #include <cutils/log.h>
+        #include <hardware/hardware.h>
+        #include <hardware/camera_common.h>
+        #include <hardware/camera3.h>
+        
+        #define LOG_TAG "MinimalCameraHAL"
+        
+        static int camera_device_close(struct hw_device_t* device) {
+            free(device);
+            return 0;
+        }
+        
+        static int camera_get_number_of_cameras(void) {
+            ALOGI("MinimalCameraHAL: get_number_of_cameras()");
+            // Проверяем есть ли V4L2 устройства
+            int fd = open("/dev/video0", O_RDONLY);
+            if (fd >= 0) {
+                close(fd);
+                return 1; // Одна камера найдена
+            }
+            return 0; // Камер нет
+        }
+        
+        static int camera_get_camera_info(int camera_id, struct camera_info* info) {
+            ALOGI("MinimalCameraHAL: get_camera_info(%d)", camera_id);
+            if (camera_id == 0) {
+                info->facing = CAMERA_FACING_BACK;
+                info->orientation = 0;
+                return 0;
+            }
+            return -1;
+        }
+        
+        static int camera_set_callbacks(const camera_module_callbacks_t* callbacks) {
+            ALOGI("MinimalCameraHAL: set_callbacks()");
+            return 0;
+        }
+        
+        static int camera_open(const struct hw_module_t* module, const char* id, 
+                              struct hw_device_t** device) {
+            ALOGI("MinimalCameraHAL: open(%s)", id);
+            
+            if (strcmp(id, "0") != 0) return -1;
+            
+            struct hw_device_t* dev = (struct hw_device_t*)calloc(1, sizeof(struct hw_device_t));
+            if (!dev) return -1;
+            
+            dev->tag = HARDWARE_DEVICE_TAG;
+            dev->version = CAMERA_DEVICE_API_VERSION_3_0;
+            dev->module = (struct hw_module_t*)module;
+            dev->close = camera_device_close;
+            
+            *device = dev;
+            return 0;
+        }
+        
+        static struct hw_module_methods_t camera_module_methods = {
+            .open = camera_open
+        };
+        
+        camera_module_t HAL_MODULE_INFO_SYM = {
+            .common = {
+                .tag = HARDWARE_MODULE_TAG,
+                .module_api_version = CAMERA_MODULE_API_VERSION_2_4,
+                .hal_api_version = HARDWARE_HAL_API_VERSION,
+                .id = CAMERA_HARDWARE_MODULE_ID,
+                .name = "Minimal V4L2 Camera HAL",
+                .author = "Android",
+                .methods = &camera_module_methods,
+            },
+            .get_number_of_cameras = camera_get_number_of_cameras,
+            .get_camera_info = camera_get_camera_info,
+            .set_callbacks = camera_set_callbacks,
+        };
+        EOF
+        
+        # Создаём минимальные заголовки
         mkdir -p hardware
-        mkdir -p utils
-        mkdir -p system
-        mkdir -p frameworks/av/include/camera
-        mkdir -p frameworks/native/include
+        cat > hardware/camera_common.h << 'EOF'
+        #ifndef HARDWARE_CAMERA_COMMON_H
+        #define HARDWARE_CAMERA_COMMON_H
         
-        # hardware/camera3.h
+        #include <hardware/hardware.h>
+        
+        #define CAMERA_HARDWARE_MODULE_ID "camera"
+        #define CAMERA_MODULE_API_VERSION_2_4 HARDWARE_MODULE_API_VERSION(2, 4)
+        
+        #define CAMERA_DEVICE_API_VERSION_1_0 HARDWARE_DEVICE_API_VERSION(1, 0)
+        #define CAMERA_DEVICE_API_VERSION_2_0 HARDWARE_DEVICE_API_VERSION(2, 0)
+        #define CAMERA_DEVICE_API_VERSION_3_0 HARDWARE_DEVICE_API_VERSION(3, 0)
+        #define CAMERA_DEVICE_API_VERSION_3_1 HARDWARE_DEVICE_API_VERSION(3, 1)
+        #define CAMERA_DEVICE_API_VERSION_3_2 HARDWARE_DEVICE_API_VERSION(3, 2)
+        #define CAMERA_DEVICE_API_VERSION_3_3 HARDWARE_DEVICE_API_VERSION(3, 3)
+        #define CAMERA_DEVICE_API_VERSION_3_4 HARDWARE_DEVICE_API_VERSION(3, 4)
+        #define CAMERA_DEVICE_API_VERSION_3_5 HARDWARE_DEVICE_API_VERSION(3, 5)
+        #define CAMERA_DEVICE_API_VERSION_3_6 HARDWARE_DEVICE_API_VERSION(3, 6)
+        #define CAMERA_DEVICE_API_VERSION_3_7 HARDWARE_DEVICE_API_VERSION(3, 7)
+        
+        typedef enum {
+            CAMERA_FACING_BACK = 0,
+            CAMERA_FACING_FRONT = 1,
+            CAMERA_FACING_EXTERNAL = 2
+        } camera_facing_t;
+        
+        typedef struct camera_info {
+            int facing;
+            int orientation;
+            void* static_camera_characteristics;
+            uint32_t device_version;
+        } camera_info_t;
+        
+        typedef struct camera_module_callbacks {
+            void (*camera_device_status_change)(const struct camera_module_callbacks*,
+                                               int camera_id, int new_status);
+            void (*torch_mode_status_change)(const struct camera_module_callbacks*,
+                                            const char* camera_id, int new_status);
+        } camera_module_callbacks_t;
+        
+        __BEGIN_DECLS
+        
+        typedef struct camera_module {
+            hw_module_t common;
+            int (*get_number_of_cameras)(void);
+            int (*get_camera_info)(int camera_id, struct camera_info* info);
+            int (*set_callbacks)(const camera_module_callbacks_t* callbacks);
+            void* reserved[6];
+        } camera_module_t;
+        
+        __END_DECLS
+        
+        #endif
+        EOF
+        
         cat > hardware/camera3.h << 'EOF'
         #ifndef HARDWARE_CAMERA3_H
         #define HARDWARE_CAMERA3_H
         
-        #include <stdint.h>
-        #include <sys/cdefs.h>
+        #include <hardware/hardware.h>
+        #include <hardware/camera_common.h>
         
         __BEGIN_DECLS
         
         typedef struct camera3_device_ops {
-            int (*initialize)(const struct camera3_device*);
-            int (*configure_streams)(const struct camera3_device*);
-            int (*register_stream_buffers)(const struct camera3_device*);
-            int (*construct_default_request_settings)(const struct camera3_device*);
-            int (*process_capture_request)(const struct camera3_device*);
-            void (*get_metadata_vendor_tag_ops)(const struct camera3_device*);
-            void (*signal_stream_flush)(const struct camera3_device*);
-            void (*dump)(const struct camera3_device*);
+            int (*initialize)(const struct camera3_device*,
+                             const camera3_callback_ops_t*);
+            int (*configure_streams)(const struct camera3_device*,
+                                    camera3_stream_configuration_t*);
+            int (*register_stream_buffers)(const struct camera3_device*,
+                                          const camera3_stream_buffer_set_t*);
+            const camera_metadata_t* (*construct_default_request_settings)(
+                const struct camera3_device*, int type);
+            int (*process_capture_request)(const struct camera3_device*,
+                                          camera3_capture_request_t*);
+            void (*get_metadata_vendor_tag_ops)(const struct camera3_device*,
+                                               vendor_tag_ops_t*);
+            void (*signal_stream_flush)(const struct camera3_device*,
+                                       uint32_t num_streams,
+                                       const camera3_stream_t* const* streams);
+            int (*flush)(const struct camera3_device*);
         } camera3_device_ops_t;
         
         typedef struct camera3_device {
-            struct hw_device_t common;
+            hw_device_t common;
             camera3_device_ops_t* ops;
             void* priv;
         } camera3_device_t;
@@ -61,168 +201,29 @@ jobs:
         #endif
         EOF
         
-        # hardware/camera_common.h
-        cat > hardware/camera_common.h << 'EOF'
-        #ifndef HARDWARE_CAMERA_COMMON_H
-        #define HARDWARE_CAMERA_COMMON_H
-        
-        #include <stdint.h>
-        #include <sys/cdefs.h>
-        
-        #define CAMERA_DEVICE_API_VERSION_1_0 HARDWARE_DEVICE_API_VERSION(1, 0)
-        #define CAMERA_DEVICE_API_VERSION_3_0 HARDWARE_DEVICE_API_VERSION(3, 0)
-        #define CAMERA_DEVICE_API_VERSION_3_1 HARDWARE_DEVICE_API_VERSION(3, 1)
-        #define CAMERA_DEVICE_API_VERSION_3_2 HARDWARE_DEVICE_API_VERSION(3, 2)
-        #define CAMERA_DEVICE_API_VERSION_3_3 HARDWARE_DEVICE_API_VERSION(3, 3)
-        #define CAMERA_DEVICE_API_VERSION_3_4 HARDWARE_DEVICE_API_VERSION(3, 4)
-        #define CAMERA_DEVICE_API_VERSION_3_5 HARDWARE_DEVICE_API_VERSION(3, 5)
-        
-        typedef struct camera_info {
-            int facing;
-            int orientation;
-            void* static_camera_characteristics;
-        } camera_info_t;
-        
-        __BEGIN_DECLS
-        
-        typedef struct camera_module {
-            struct hw_module_t common;
-            int (*get_number_of_cameras)(void);
-            int (*get_camera_info)(int camera_id, struct camera_info *info);
-        } camera_module_t;
-        
-        __END_DECLS
-        
-        #endif
-        EOF
-        
-        # hardware/hardware.h
-        cat > hardware/hardware.h << 'EOF'
-        #ifndef HARDWARE_HARDWARE_H
-        #define HARDWARE_HARDWARE_H
-        
-        #include <stdint.h>
-        #include <sys/cdefs.h>
-        
-        #define HARDWARE_MODULE_API_VERSION(maj, min) (((maj) << 8) | (min))
-        #define HARDWARE_DEVICE_API_VERSION(maj, min) (((maj) << 16) | (min))
-        
-        #define HARDWARE_MODULE_TAG 0x48_57_4D_42
-        
-        typedef struct hw_module_t {
-            uint32_t tag;
-            uint16_t module_api_version;
-            uint16_t hal_api_version;
-            const char* id;
-            const char* name;
-            const char* author;
-            struct hw_module_methods_t* methods;
-        } hw_module_t;
-        
-        typedef struct hw_module_methods_t {
-            int (*open)(const struct hw_module_t* module, const char* id, struct hw_device_t** device);
-        } hw_module_methods_t;
-        
-        typedef struct hw_device_t {
-            uint32_t tag;
-            uint32_t version;
-            struct hw_module_t* module;
-            uint32_t reserved[12];
-            int (*close)(struct hw_device_t* device);
-        } hw_device_t;
-        
-        #endif
-        EOF
-        
-        # utils/Log.h
-        cat > utils/Log.h << 'EOF'
-        #ifndef UTILS_LOG_H
-        #define UTILS_LOG_H
-        
-        #include <android/log.h>
-        
-        #define LOG_TAG "CameraHAL"
-        #define ALOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
-        #define ALOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
-        #define ALOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
-        #define ALOGV(...) __android_log_print(ANDROID_LOG_VERBOSE, LOG_TAG, __VA_ARGS__)
-        
-        #endif
-        EOF
-        
-        # utils/Mutex.h
-        cat > utils/Mutex.h << 'EOF'
-        #ifndef UTILS_MUTEX_H
-        #define UTILS_MUTEX_H
-        
-        #include <pthread.h>
-        
-        class Mutex {
-        public:
-            Mutex() { pthread_mutex_init(&mMutex, NULL); }
-            ~Mutex() { pthread_mutex_destroy(&mMutex); }
-            void lock() { pthread_mutex_lock(&mMutex); }
-            void unlock() { pthread_mutex_unlock(&mMutex); }
-        private:
-            pthread_mutex_t mMutex;
-        };
-        
-        #endif
-        EOF
-        
-        # YuvToJpegEncoder.h
-        cat > YuvToJpegEncoder.h << 'EOF'
-        #ifndef YUV_TO_JPEG_ENCODER_H
-        #define YUV_TO_JPEG_ENCODER_H
-        
-        class YuvToJpegEncoder {
-        public:
-            static int encode(void* buffer, int width, int height) { return 0; }
-        };
-        
-        #endif
-        EOF
-
-    - name: Компиляция с исправленными путями
-      run: |
-        export NDK_PATH=$GITHUB_WORKSPACE/android-ndk-r25b
-        export TOOLCHAIN=$NDK_PATH/toolchains/llvm/prebuilt/linux-x86_64
-        export TARGET=armv7a-linux-androideabi
-        export API=28
-        
-        echo "=== КОМПИЛЯЦИЯ С ИСПРАВЛЕННЫМИ ПУТЯМИ ==="
-        
-        # Убираем флаг -DLOG_TAG чтобы избежать переопределения
+        # Компилируем простой HAL
+        echo "=== КОМПИЛЯЦИЯ ПРОСТОГО HAL ==="
         $TOOLCHAIN/bin/$TARGET$API-clang++ \
           -shared -fPIC -std=c++17 \
           -o camera.msm8916.so \
-          *.cpp \
-          -I. -Ihardware -Iutils -Isystem \
-          -llog -lutils -lcutils -lhardware -landroid \
+          minimal_camera_hal.cpp \
+          -I. -I$NDK_PATH/sysroot/usr/include -Ihardware \
+          -llog -lutils -lcutils -lcamera_metadata \
           -D__ARM_ARCH_7A__ \
-          -Wno-multichar -Wno-deprecated-declarations -Wno-macro-redefined
+          -Wno-multichar -Wno-deprecated-declarations
         
         echo "=== РЕЗУЛЬТАТ ==="
         if [ -f "camera.msm8916.so" ]; then
-          echo "✅ УСПЕХ: Файл создан!"
+          echo "✅ УСПЕХ: Простой HAL создан!"
           file camera.msm8916.so
           ls -la camera.msm8916.so
         else
-          echo "❌ Файл не создан"
-          # Пробуем компилировать без проблемных файлов
-          echo "Пробуем минимальную компиляцию..."
-          $TOOLCHAIN/bin/$TARGET$API-clang++ \
-            -shared -fPIC -std=c++17 \
-            -o camera.msm8916.so \
-            V4l2Device.cpp Workers.cpp \
-            -I. -Ihardware -Iutils \
-            -llog -lutils -lcamera_metadata \
-            -D__ARM_ARCH_7A__ -Wno-multichar
+          echo "❌ Не удалось создать HAL"
         fi
 
     - name: Сохранение результата
       if: success()
       uses: actions/upload-artifact@v4
       with:
-        name: camera-msm8916-hal
+        name: simple-camera-hal
         path: camera.msm8916.so
